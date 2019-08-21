@@ -302,4 +302,16 @@ extension SRPMpzT: Comparable
     {
         return mp_int_compare_zero(&value) == 0
     }
+    
+    public func printToString() -> String
+    {
+        let len = mp_int_string_len(&value, 10);
+        var buffer = UnsafeMutablePointer<Int8>.allocate(capacity: Int(len))
+        defer {
+            buffer.deinitialize(count: Int(len))
+            buffer.deallocate()
+        }
+        mp_int_to_string(&value, 10, buffer, len)
+        return String(cString: buffer)
+    }
 }

@@ -116,4 +116,6 @@ public protocol SRPBigIntProtocol: Comparable
     /// - Parameter width: The desired maximum number of bits to represent the integer.
     /// - Returns: Random integer.
     static func randomInteger(lessThan limit: Self) -> Self
+    
+    func printToString() -> String
 }
