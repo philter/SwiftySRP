@@ -51,6 +51,21 @@ public struct SRP
         try configuration.validate()
         return SRPGenericImpl<BigIntType>(configuration: configuration)
     }
+    
+    public static func `protocolRFC2945`<BigIntType: SRPBigIntProtocol>(N: BigIntType,
+                                                                 g: BigIntType,
+                                                                 digest: @escaping DigestFunc = CryptoAlgorithm.SHA256.digestFunc(),
+                                                                 hmac: @escaping HMacFunc = CryptoAlgorithm.SHA256.hmacFunc()) throws -> SRPProtocol
+    {
+        let configuration = SRPConfigurationGenericImpl<BigIntType>(N: N,
+                                                                    g: g,
+                                                                    digest: digest,
+                                                                    hmac: hmac,
+                                                                    aFunc: nil,
+                                                                    bFunc: nil)
+        try configuration.validate()
+        return SRPRFC2945Impl<BigIntType>(configuration: configuration)
+    }
 }
 
 

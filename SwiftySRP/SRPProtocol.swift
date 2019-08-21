@@ -135,13 +135,13 @@ public protocol SRPProtocol
     ///   - B: Server public ephemeral value B (per spec. above)
     /// - Returns: SRPData with the client evidence message populated.
     /// - Throws: SRPError if some of the required parameters are invalid.
-    func clientEvidenceMessage(srpData: SRPData) throws -> SRPData
+    func clientEvidenceMessage(srpData: SRPData, I: Data, salt: Data) throws -> SRPData
     
     /// Verify the client evidence message (received from the client)
     ///
     /// - Parameter srpData: SRPData with the following fields populated: A, B, clientM, serverS
     /// - Throws: SRPError in case verification fails or when some of the required parameters are invalid.
-    func verifyClientEvidenceMessage(srpData: SRPData) throws
+    func verifyClientEvidenceMessage(srpData: SRPData, I: Data, salt: Data) throws
     
     /// Calculate the shared key (client side) in the standard way: sharedKey = H(clientS)
     ///

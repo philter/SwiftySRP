@@ -28,7 +28,7 @@ import FFDataWrapper
 
 /// Implementation of the SRP protocol. Although it's primarily intended to be used on the client side, it includes the server side methods
 /// as well (for testing purposes).
-public struct SRPGenericImpl<BigIntType: SRPBigIntProtocol>: SRPProtocol
+public struct SRPRFC2945Impl<BigIntType: SRPBigIntProtocol>: SRPProtocol
 {
     /// SRP configuration. Defines the prime N and generator g to be used, and also the relevant hashing functions.
     public var configuration: SRPConfiguration
@@ -236,8 +236,7 @@ public struct SRPGenericImpl<BigIntType: SRPBigIntProtocol>: SRPProtocol
     }
     
     /// Compute the client evidence message.
-    /// NOTE: This is different from the spec. above and is done the BouncyCastle way:
-    /// M = H( pA | pB | pS), where pA, pB, and pS - padded values of A, B, and S
+    /// Uses RFC 2945 method: M = H(H(N) xor H(g), H(I), s, A, B, K)
     /// - Parameter srpData: SRP data to use in the calculation.
     ///   Must have the following fields populated:
     ///   - a: Private ephemeral value a (per spec. above)
@@ -250,6 +249,7 @@ public struct SRPGenericImpl<BigIntType: SRPBigIntProtocol>: SRPProtocol
     {
         try configuration.validate()
         let N: BigIntType = configuration.bigInt_N()
+        let g: BigIntType = configuration.bigInt_g()
         
         var resultData = srpData
         
@@ -261,18 +261,39 @@ public struct SRPGenericImpl<BigIntType: SRPBigIntProtocol>: SRPProtocol
             resultData = try calculateClientSecret(srpData: resultData)
         }
         
-        let bigIntClientM = hashPaddedTriplet(digest: configuration.digest,
-                                              N: N, n1: resultData.bigInt_A(),
-                                              n2: resultData.bigInt_B(),
-                                              n3: resultData.bigInt_clientS())
-        resultData.setBigInt_clientM(bigIntClientM)
-        return resultData
+        let HN: Data = configuration.digest(N.serialize())
+        let Hg: Data = configuration.digest(g.serialize())
+        if let HN_xor_Hg = HN ^ Hg {
+            let A: Data = (resultData.bigInt_A() as BigIntType).serialize()
+            let HI: Data = configuration.digest(I)
+            let B: Data = (resultData.bigInt_B() as BigIntType).serialize()
+            let S: Data = (resultData.bigInt_clientS() as BigIntType).serialize()
+            
+            let key = configuration.digest(S)
+            
+            let count1 = HN_xor_Hg.count + HI.count
+            let count2 = salt.count + A.count
+            let count3 = B.count + key.count
+            let capacity = count1 + count2 + count3
+            var dataToHash = Data(capacity: capacity)
+            dataToHash.append(HN_xor_Hg)
+            dataToHash.append(HI)
+            dataToHash.append(salt)
+            dataToHash.append(A)
+            dataToHash.append(B)
+            dataToHash.append(key)
+            let hash = configuration.digest(dataToHash)
+            
+            let bigIntClientM = BigIntType(hash)
+            resultData.setBigInt_clientM(bigIntClientM)
+            return resultData
+        } else {
+            throw SRPError.configurationGeneratorInvalid
+        }
     }
     
-    
     /// Compute the server evidence message.
-    /// NOTE: This is different from the spec above and is done the BouncyCastle way:
-    /// M = H( pA | pMc | pS), where pA is the padded A value; pMc is the padded client evidence message, and pS is the padded shared secret.
+    /// Uses RFC 2945 method: M = H(A, clientM, K)
     /// - Parameter srpData: SRP Data with the following fields populated:
     ///   - A: Client value A
     ///   - v: Password verifier v (per spec above)
@@ -294,41 +315,72 @@ public struct SRPGenericImpl<BigIntType: SRPBigIntProtocol>: SRPProtocol
             resultData = try calculateServerSecret(srpData: resultData)
         }
         
-        let bigIntServerM = hashPaddedTriplet(digest: configuration.digest,
-                                              N: N,
-                                              n1: resultData.bigInt_A(),
-                                              n2: resultData.bigInt_clientM(),
-                                              n3: resultData.bigInt_serverS())
+        let A = (resultData.bigInt_A() as BigIntType).serialize()
+        let clientM = (resultData.bigInt_clientM() as BigIntType).serialize()
+        let key: Data = try calculateServerSharedKey(srpData: resultData)
+        
+        var dataToHash = Data(capacity: A.count + clientM.count + key.count)
+        dataToHash.append(A)
+        dataToHash.append(clientM)
+        dataToHash.append(key)
+        let hash = configuration.digest(dataToHash)
+        let bigIntServerM =  BigIntType(hash)
         resultData.setBigInt_serverM(bigIntServerM)
         
         return resultData
     }
     
-    
     /// Verify the client evidence message (received from the client)
+    /// Uses RFC 2945 method: M = H(H(N) xor H(g), H(I), s, A, B, K)
     ///
     /// - Parameter srpData: SRPData with the following fields populated: A, B, clientM, serverS
+    /// - Parameter I: Username
+    /// - Parameter salt: SRP salt
     /// - Throws: SRPError in case verification fails or when some of the required parameters are invalid.
     public func verifyClientEvidenceMessage(srpData: SRPData, I: Data, salt: Data) throws
     {
         try configuration.validate()
         let N: BigIntType = configuration.bigInt_N()
+        let g: BigIntType = configuration.bigInt_g()
         let resultData = srpData
         guard resultData.bigInt_clientM() > BigIntType(0) else { throw SRPError.invalidClientEvidenceMessage }
         guard (resultData.bigInt_A() % N) > BigIntType(0) else { throw SRPError.invalidClientPublicValue }
         guard (resultData.bigInt_B() % N) > BigIntType(0) else { throw SRPError.invalidServerPublicValue }
         guard resultData.bigInt_serverS() > BigIntType(0) else { throw SRPError.invalidServerSharedSecret }
         
-        let M = hashPaddedTriplet(digest: configuration.digest,
-                                  N: N,
-                                  n1: resultData.bigInt_A(),
-                                  n2: resultData.bigInt_B(),
-                                  n3: resultData.bigInt_serverS())
-        guard (M == resultData.bigInt_clientM()) else { throw SRPError.invalidClientEvidenceMessage }
+        let HN: Data = configuration.digest(N.serialize())
+        let Hg: Data = configuration.digest(g.serialize())
+        if let HN_xor_Hg = HN ^ Hg {
+            let A: Data = (resultData.bigInt_A() as BigIntType).serialize()
+            let HI: Data = configuration.digest(I)
+            let B: Data = (resultData.bigInt_B() as BigIntType).serialize()
+            let S: Data = (resultData.bigInt_serverS() as BigIntType).serialize()
+            
+            let key = configuration.digest(S)
+            
+            let count1 = HN_xor_Hg.count + HI.count
+            let count2 = salt.count + A.count
+            let count3 = B.count + key.count
+            let capacity = count1 + count2 + count3
+            var dataToHash = Data(capacity: capacity)
+            dataToHash.append(HN_xor_Hg)
+            dataToHash.append(HI)
+            dataToHash.append(salt)
+            dataToHash.append(A)
+            dataToHash.append(B)
+            dataToHash.append(key)
+            let hash = configuration.digest(dataToHash)
+            let M = BigIntType(hash)
+            
+            guard (M == resultData.bigInt_clientM()) else { throw SRPError.invalidClientEvidenceMessage }
+        } else {
+            throw SRPError.invalidClientEvidenceMessage
+        }
     }
     
     
     /// Verify the server evidence message (received from the server)
+    /// Uses RFC 2945 method: M = H(A, clientM, K)
     ///
     /// - Parameter srpData: SRPData with the following fields populated: serverM, clientM, A, clientS
     /// - Throws: SRPError if verification fails or if some of the input parameters is invalid.
@@ -336,17 +388,30 @@ public struct SRPGenericImpl<BigIntType: SRPBigIntProtocol>: SRPProtocol
     {
         try configuration.validate()
         let N: BigIntType = configuration.bigInt_N()
-        let resultData = srpData
+        
+        var resultData = srpData
+        
         guard resultData.bigInt_serverM() > BigIntType(0) else { throw SRPError.invalidServerEvidenceMessage }
         guard resultData.bigInt_clientM() > BigIntType(0) else { throw SRPError.invalidClientEvidenceMessage }
         guard (resultData.bigInt_A() % N) > BigIntType(0) else { throw SRPError.invalidClientPublicValue }
         guard resultData.bigInt_clientS() > BigIntType(0) else { throw SRPError.invalidClientSharedSecret }
         
-        let M = hashPaddedTriplet(digest: configuration.digest,
-                                  N: N,
-                                  n1: resultData.bigInt_A(),
-                                  n2: resultData.bigInt_clientM(),
-                                  n3: resultData.bigInt_clientS())
+        if resultData.bigInt_serverS() == BigIntType(0)
+        {
+            resultData = try calculateServerSecret(srpData: resultData)
+        }
+        
+        let A = (resultData.bigInt_A() as BigIntType).serialize()
+        let clientM = (resultData.bigInt_clientM() as BigIntType).serialize()
+        let key: Data = try calculateServerSharedKey(srpData: resultData)
+        
+        var dataToHash = Data(capacity: A.count + clientM.count + key.count)
+        dataToHash.append(A)
+        dataToHash.append(clientM)
+        dataToHash.append(key)
+        let hash = configuration.digest(dataToHash)
+        let M = BigIntType(hash)
+        
         guard (M == resultData.bigInt_serverM()) else { throw SRPError.invalidServerEvidenceMessage }
     }
     
@@ -582,3 +647,13 @@ public struct SRPGenericImpl<BigIntType: SRPBigIntProtocol>: SRPProtocol
     }
 }
 
+extension Data {
+    static func ^ (lhs: Data, rhs: Data) -> Data? {
+        guard lhs.count == rhs.count else { return nil }
+        var result = Data(count: lhs.count)
+        for index in lhs.indices {
+            result[index] = lhs[index] ^ rhs[index]
+        }
+        return result
+    }
+}

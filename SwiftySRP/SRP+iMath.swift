@@ -40,5 +40,20 @@ public struct SRPIMathFactory
         return SRPGenericImpl<SRPMpzT>(configuration: configuration)
     }
     
+    public func `protocolRFC2945`(N: Data,
+                           g: Data,
+                           digest: @escaping DigestFunc = CryptoAlgorithm.SHA256.digestFunc(),
+                           hmac: @escaping HMacFunc = CryptoAlgorithm.SHA256.hmacFunc()) throws -> SRPProtocol
+    {
+        let configuration = SRPConfigurationGenericImpl<SRPMpzT>(N: SRPMpzT(N),
+                                                                 g: SRPMpzT(g),
+                                                                 digest: digest,
+                                                                 hmac: hmac,
+                                                                 aFunc: nil,
+                                                                 bFunc: nil)
+        try configuration.validate()
+        return SRPRFC2945Impl<SRPMpzT>(configuration: configuration)
+    }
+    
 }
 
