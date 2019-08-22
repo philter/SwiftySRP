@@ -389,21 +389,18 @@ public struct SRPRFC2945Impl<BigIntType: SRPBigIntProtocol>: SRPProtocol
         try configuration.validate()
         let N: BigIntType = configuration.bigInt_N()
         
-        var resultData = srpData
+        let resultData = srpData
         
         guard resultData.bigInt_serverM() > BigIntType(0) else { throw SRPError.invalidServerEvidenceMessage }
         guard resultData.bigInt_clientM() > BigIntType(0) else { throw SRPError.invalidClientEvidenceMessage }
         guard (resultData.bigInt_A() % N) > BigIntType(0) else { throw SRPError.invalidClientPublicValue }
         guard resultData.bigInt_clientS() > BigIntType(0) else { throw SRPError.invalidClientSharedSecret }
         
-        if resultData.bigInt_serverS() == BigIntType(0)
-        {
-            resultData = try calculateServerSecret(srpData: resultData)
-        }
-        
         let A = (resultData.bigInt_A() as BigIntType).serialize()
         let clientM = (resultData.bigInt_clientM() as BigIntType).serialize()
-        let key: Data = try calculateServerSharedKey(srpData: resultData)
+        let S = (resultData.bigInt_clientS() as BigIntType).serialize()
+        
+        let key = configuration.digest(S)
         
         var dataToHash = Data(capacity: A.count + clientM.count + key.count)
         dataToHash.append(A)
