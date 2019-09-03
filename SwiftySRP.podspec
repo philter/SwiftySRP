@@ -20,5 +20,6 @@ Pod::Spec.new do |spec|
     # Things are listed twice (with different paths) in order to also make it compile as a development pod.
 
     spec.preserve_paths = 'README', 'SwiftySRPTests/*.swift'
+    spec.static_framework = true
 
 end
